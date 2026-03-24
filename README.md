@@ -161,8 +161,8 @@ cms_backend/
 
 ## Screenshots
 - Register — Postman:
-  ![Register — Postman](./screenshots/preview%20(1).webp)
+  ![Register — Postman](./screenshots/preview.webp)
 - Login — Postman:
-  ![Login — Postman](./screenshots/preview%20(2).webp)
+  ![Login — Postman](./screenshots/preview%20(1).webp)
 - Avatar Upload — Postman:
-  ![Avatar Upload — Postman](./screenshots/preview.webp)
+  ![Avatar Upload — Postman](./screenshots/preview%20(2).webp)
