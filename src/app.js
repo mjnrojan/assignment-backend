@@ -1,23 +1,33 @@
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
 const path = require("path");
 
-const { PORT, NODE_ENV, CLIENT_URL } = require("./config/config");
+const { NODE_ENV, CLIENT_URL } = require("./config/config");
 const connectDB = require("./config/database");
-const userRoutes = require("./routes/user.routes");
-const courseRoutes = require("./routes/course.routes");
+const authRoutes = require("./routes/auth.routes");
+const profileRoutes = require("./routes/profile.routes");
+const recipeRoutes = require("./routes/recipe.routes");
+const socialRoutes = require("./routes/social.routes");
+const adminRoutes = require("./routes/admin.routes");
+const analyticsRoutes = require("./routes/analytics.routes");
+const searchRoutes = require("./routes/search.routes");
+const sanitise = require("./middleware/sanitise");
+const errorHandler = require("./middleware/errorHandler");
 
 const app = express();
 
-// CORS middleware - allows frontend to connect
+// Security + CORS middleware
+app.use(helmet());
 app.use(cors({
   origin: CLIENT_URL,
   credentials: true,
 }));
 
-// Body parsing middleware - to read JSON data
-app.use(express.json());
+// Body parsing middleware
+app.use(express.json({ limit: "10kb" }));
 app.use(express.urlencoded({ extended: true }));
+app.use(...sanitise);
 
 // Request logging (development only)
 if (NODE_ENV === "development") {
@@ -28,42 +38,42 @@ if (NODE_ENV === "development") {
 }
 
 // Database connection
-connectDB();
+if (NODE_ENV !== "test") {
+  connectDB();
+}
 
 // Health check - to verify server is running
 app.get("/", (req, res) => {
   res.status(200).json({
     success: true,
-    message: "Course Management System API",
-    version: "1.0.0",
+    message: "RecipeNest Backend API",
+    version: "2.0.0",
     status: "running",
   });
 });
 
 // API routes
-app.use("/api/users", userRoutes);
-app.use("/api/courses", courseRoutes);
+app.use("/api/users", authRoutes);
+app.use("/api/profiles", profileRoutes);
+app.use("/api/recipes", recipeRoutes);
+app.use("/api/social", socialRoutes);
+app.use("/api/admin", adminRoutes);
+app.use("/api/analytics", analyticsRoutes);
+app.use("/api/search", searchRoutes);
 
 // Static files for uploads
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 // 404 handler - when route is not found
-app.use((req, res, next) => {
-  const error = new Error(`Route not found: ${req.originalUrl}`);
-  error.statusCode = 404;
-  next(error);
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: `Route not found: ${req.originalUrl}`,
+    code: "NOT_FOUND",
+  });
 });
 
 // Global error handler
-app.use((err, req, res, next) => {
-  console.error("Error:", err.message);
-
-  const statusCode = err.statusCode || 500;
-  res.status(statusCode).json({
-    success: false,
-    message: err.message || "Internal Server Error",
-    statusCode,
-  });
-});
+app.use(errorHandler);
 
 module.exports = app;

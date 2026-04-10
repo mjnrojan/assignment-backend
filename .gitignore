@@ -1,3 +1,15 @@
 node_modules
 .env
 uploads/
+
+# Documentation
+POSTMAN_GUIDE.md
+backend-api-routes.md
+backend-non-api.md
+
+# Testing
+tests/
+jest.config.js
+
+# Data
+datasets/
