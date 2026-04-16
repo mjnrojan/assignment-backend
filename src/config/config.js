@@ -11,7 +11,15 @@ module.exports = {
   
   // JWT
   JWT_SECRET: process.env.JWT_SECRET || "",
-  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "1d",
+  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "1h",
+  JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || "refresh_secret_123",
+  JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
+  JWT_VERIFICATION_SECRET: process.env.JWT_VERIFICATION_SECRET || "verification_secret_456",
+  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID || "",
+  GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET || "",
+
+  // Security
+  BCRYPT_SALT_ROUNDS: parseInt(process.env.BCRYPT_SALT_ROUNDS, 10) || 12,
   
   // CORS
   CLIENT_URL: process.env.CLIENT_URL || "http://localhost:5173",

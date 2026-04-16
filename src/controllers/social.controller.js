@@ -4,6 +4,7 @@ const Like = require("../models/like.model");
 const Comment = require("../models/comment.model");
 const Save = require("../models/save.model");
 const Recipe = require("../models/recipe.model");
+const { createNotification } = require("../services/notification.service");
 const { successResponse, errorResponse } = require("../utils/apiResponse");
 
 // ─── FOLLOW ────────────────────────────────────────────
@@ -35,6 +36,19 @@ const followUser = async (req, res, next) => {
       await User.findByIdAndUpdate(followerId, { $inc: { followingCount: 1 } });
       await User.findByIdAndUpdate(targetId, { $inc: { followerCount: 1 } });
     }
+
+    // Trigger Notification
+    const actor = await User.findById(followerId);
+    await createNotification({
+      recipientId: targetId,
+      actorId: followerId,
+      type: status === "accepted" ? "FOLLOW" : "FOLLOW_REQUEST",
+      entityId: followerId,
+      entityModel: "RNUser",
+      message: status === "accepted" 
+        ? `${actor.firstName} followed you` 
+        : `${actor.firstName} requested to follow you`
+    });
 
     return successResponse(res, 201, follow, null,
       status === "accepted" ? "Followed successfully" : "Follow request sent"
@@ -83,6 +97,17 @@ const acceptFollowRequest = async (req, res, next) => {
 
     await User.findByIdAndUpdate(follow.followerId, { $inc: { followingCount: 1 } });
     await User.findByIdAndUpdate(follow.followingId, { $inc: { followerCount: 1 } });
+
+    // Notify the follower that their request was accepted
+    const actor = await User.findById(follow.followingId);
+    await createNotification({
+      recipientId: follow.followerId,
+      actorId: follow.followingId,
+      type: "FOLLOW",
+      entityId: follow.followingId,
+      entityModel: "RNUser",
+      message: `${actor.firstName} accepted your follow request`
+    });
 
     return successResponse(res, 200, follow, null, "Follow request accepted");
   } catch (error) {
@@ -153,7 +178,18 @@ const likeRecipe = async (req, res, next) => {
     }
 
     await Like.create({ userId, recipeId });
-    await Recipe.findByIdAndUpdate(recipeId, { $inc: { likeCount: 1 } });
+    const recipe = await Recipe.findByIdAndUpdate(recipeId, { $inc: { likeCount: 1 } });
+
+    // Notify Author
+    const actor = await User.findById(userId);
+    await createNotification({
+      recipientId: recipe.authorId,
+      actorId: userId,
+      type: "LIKE",
+      entityId: recipeId,
+      entityModel: "Recipe",
+      message: `${actor.firstName} liked your recipe: ${recipe.title}`
+    });
 
     return successResponse(res, 201, null, null, "Recipe liked");
   } catch (error) {
@@ -189,13 +225,36 @@ const addComment = async (req, res, next) => {
       return errorResponse(res, 400, "Comment text is required", "VALIDATION_ERROR");
     }
 
+    // Double Submit Protection
+    const recentDuplicate = await Comment.findOne({
+      userId: req.user.userId,
+      recipeId,
+      text: text.trim(),
+      createdAt: { $gte: new Date(Date.now() - 10 * 1000) } // Last 10 seconds
+    });
+
+    if (recentDuplicate) {
+      return errorResponse(res, 400, "Duplicate comment detected. Please wait.", "DOUBLE_SUBMIT");
+    }
+
     const comment = await Comment.create({
       userId: req.user.userId,
       recipeId,
       text: text.trim(),
     });
 
-    await Recipe.findByIdAndUpdate(recipeId, { $inc: { commentCount: 1 } });
+    const recipe = await Recipe.findByIdAndUpdate(recipeId, { $inc: { commentCount: 1 } });
+
+    // Notify Author
+    const actor = await User.findById(req.user.userId);
+    await createNotification({
+      recipientId: recipe.authorId,
+      actorId: req.user.userId,
+      type: "COMMENT",
+      entityId: recipeId,
+      entityModel: "Recipe",
+      message: `${actor.firstName} commented on your recipe: ${recipe.title}`
+    });
 
     const populated = await Comment.findById(comment._id)
       .populate("userId", "firstName lastName username");
@@ -308,6 +367,80 @@ const getSavedRecipes = async (req, res, next) => {
   }
 };
 
+const Dispute = require("../models/dispute.model");
+
+const fileDispute = async (req, res, next) => {
+  try {
+    const { recipeId } = req.params;
+    const { reason, details } = req.body;
+
+    if (!reason || !details) {
+      return errorResponse(res, 400, "Reason and details are required", "VALIDATION_ERROR");
+    }
+
+    // Prevention: User cannot file same dispute twice for same recipe
+    const existing = await Dispute.findOne({
+      reporterId: req.user.userId,
+      recipeId,
+      targetType: "Recipe",
+      status: { $ne: "resolved" }
+    });
+
+    if (existing) {
+      return errorResponse(res, 400, "You have already filed a report for this recipe.", "ALREADY_REPORTED");
+    }
+
+    const dispute = await Dispute.create({
+      reporterId: req.user.userId,
+      recipeId,
+      reason,
+      details,
+    });
+
+    // Mark the recipe as flagged so admins see it in their moderation queue immediately
+    await Recipe.findByIdAndUpdate(recipeId, { isFlagged: true });
+
+    return successResponse(res, 201, dispute, null, "Dispute filed and sent to moderation");
+  } catch (error) {
+    next(error);
+  }
+};
+
+const fileCommentDispute = async (req, res, next) => {
+  try {
+    const { commentId } = req.params;
+    const { reason, details } = req.body;
+
+    const comment = await Comment.findById(commentId);
+    if (!comment) return errorResponse(res, 404, "Comment not found", "NOT_FOUND");
+
+    // Prevention: User cannot report same comment twice
+    const existing = await Dispute.findOne({
+      reporterId: req.user.userId,
+      commentId,
+      targetType: "Comment",
+      status: { $ne: "resolved" }
+    });
+
+    if (existing) {
+      return errorResponse(res, 400, "You have already reported this comment.", "ALREADY_REPORTED");
+    }
+
+    const dispute = await Dispute.create({
+      reporterId: req.user.userId,
+      recipeId: comment.recipeId,
+      commentId,
+      targetType: "Comment",
+      reason,
+      details,
+    });
+
+    return successResponse(res, 201, dispute, null, "Comment reported and sent to moderation");
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   followUser,
   unfollowUser,
@@ -324,4 +457,6 @@ module.exports = {
   saveRecipe,
   unsaveRecipe,
   getSavedRecipes,
+  fileDispute,
+  fileCommentDispute,
 };

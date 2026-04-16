@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
+const { BCRYPT_SALT_ROUNDS } = require("../config/config");
 
 const UserSchema = new mongoose.Schema(
   {
@@ -7,17 +8,18 @@ const UserSchema = new mongoose.Schema(
     lastName: { type: String, required: true, trim: true },
     username: { type: String, trim: true, unique: true, sparse: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-    passwordHash: { type: String, required: true, select: false },
+    passwordHash: { type: String, select: false },
     role: { type: String, enum: ["user", "admin"], default: "user" },
     isActive: { type: Boolean, default: true },
-    isVerified: { type: Boolean, default: false },
+    isEmailVerified: { type: Boolean, default: false },
     isPrivate: { type: Boolean, default: false },
     isProfessional: { type: Boolean, default: false },
     followerCount: { type: Number, default: 0 },
     followingCount: { type: Number, default: 0 },
-    resetToken: { type: String, select: false },
-    resetTokenExpiry: { type: Date },
+    resetPasswordToken: { type: String, select: false },
+    resetPasswordExpires: { type: Date },
     verificationToken: { type: String, select: false },
+    refreshToken: { type: String, select: false },
   },
   { timestamps: true }
 );
@@ -28,7 +30,7 @@ UserSchema.pre("save", async function hashPasswordIfNeeded() {
   if (!this.isModified("passwordHash")) {
     return;
   }
-  const salt = await bcrypt.genSalt(12);
+  const salt = await bcrypt.genSalt(BCRYPT_SALT_ROUNDS);
   this.passwordHash = await bcrypt.hash(this.passwordHash, salt);
 });
 

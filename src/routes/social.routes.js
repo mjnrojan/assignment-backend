@@ -26,5 +26,7 @@ router.delete("/comments/:commentId", verifyToken, controller.deleteComment);
 router.post("/save/:recipeId", verifyToken, controller.saveRecipe);
 router.delete("/unsave/:recipeId", verifyToken, controller.unsaveRecipe);
 router.get("/saved", verifyToken, controller.getSavedRecipes);
+router.post("/dispute/:recipeId", verifyToken, controller.fileDispute);
+router.post("/dispute-comment/:commentId", verifyToken, controller.fileCommentDispute);
 
 module.exports = router;

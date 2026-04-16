@@ -1,15 +1,29 @@
-node_modules
+node_modules/
 .env
+.env.*
 uploads/
+logs/
+coverage/
+
+# Scripts & Maintenance
+scripts/
 
 # Documentation
 POSTMAN_GUIDE.md
 backend-api-routes.md
 backend-non-api.md
+PLATFORM_MIGRATION_V2.md
+
+# OS/IDEs
+.vscode/
+.idea/
+.DS_Store
+*.log
 
 # Testing
 tests/
 jest.config.js
+.jest/
 
 # Data
 datasets/

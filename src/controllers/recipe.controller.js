@@ -5,6 +5,7 @@ const View = require("../models/view.model");
 const Like = require("../models/like.model");
 const Save = require("../models/save.model");
 const { uploadBuffer, deleteAsset } = require("../services/cloudinary.service");
+const { notifyFollowers } = require("../services/notification.service");
 const { successResponse, errorResponse } = require("../utils/apiResponse");
 
 const listRecipes = async (req, res, next) => {
@@ -178,6 +179,63 @@ const getRecipesByUser = async (req, res, next) => {
   }
 };
 
+/**
+ * Personalized Recommendation Engine
+ * Combines "Following Feed" with "Discover Trending"
+ */
+const getPersonalizedFeed = async (req, res, next) => {
+  try {
+    const page = Number(req.query.page || 1);
+    const limit = Number(req.query.limit || 10);
+    const skip = (page - 1) * limit;
+
+    let followingIds = [];
+    if (req.user) {
+      const following = await Follow.find({
+        followerId: req.user.userId,
+        status: "accepted",
+      }).select("followingId");
+      followingIds = following.map(f => f.followingId);
+    }
+
+    // 1. Calculate Priority Feed (Following + Own Content)
+    const priorityQuery = {
+      status: "published",
+      authorId: { $in: [...followingIds, req.user?.userId].filter(Boolean) }
+    };
+
+    // 2. Discover Trending (Popular content not from following)
+    const discoveryQuery = {
+      status: "published",
+      authorId: { $nin: priorityQuery.authorId },
+      likeCount: { $gte: 2 } // Only show "proven" content in trending
+    };
+
+    // Exclude private accounts from the discovery query
+    const privateUsers = await User.find({ isPrivate: true }).select("_id");
+    const privateIds = privateUsers.map(u => u._id);
+    discoveryQuery.authorId.$nin.push(...privateIds);
+
+    // Initial load: Mix of both
+    const [followingRecipes, trendingRecipes] = await Promise.all([
+      Recipe.find(priorityQuery).sort("-createdAt").limit(limit).populate("authorId", "firstName lastName username"),
+      Recipe.find(discoveryQuery).sort("-likeCount -createdAt").limit(limit).populate("authorId", "firstName lastName username")
+    ]);
+
+    // Simple interleaving for a dynamic feel
+    const feed = [];
+    const max = Math.max(followingRecipes.length, trendingRecipes.length);
+    for (let i = 0; i < max; i++) {
+        if (followingRecipes[i]) feed.push(followingRecipes[i]);
+        if (trendingRecipes[i]) feed.push(trendingRecipes[i]);
+    }
+
+    return successResponse(res, 200, feed.slice(0, limit), null, "Personalized feed");
+  } catch (error) {
+    next(error);
+  }
+};
+
 const myRecipes = async (req, res, next) => {
   try {
     const recipes = await Recipe.find({ authorId: req.user.userId }).sort("-updatedAt");
@@ -189,8 +247,27 @@ const myRecipes = async (req, res, next) => {
 
 const createRecipe = async (req, res, next) => {
   try {
-    const payload = { ...req.body, authorId: req.user.userId };
+    // 1. Double Submit Protection (Prevent accidental rapid multiple clicks)
+    const { title } = req.body;
+    const authorId = req.user.userId;
+
+    const recentDuplicate = await Recipe.findOne({
+      authorId,
+      title,
+      createdAt: { $gte: new Date(Date.now() - 15 * 1000) }, // Last 15 seconds
+    });
+
+    if (recentDuplicate) {
+      return errorResponse(res, 400, "You just posted this recipe. Please wait a moment.", "DOUBLE_SUBMIT");
+    }
+
+    const payload = { ...req.body, authorId };
     const recipe = await Recipe.create(payload);
+
+    if (recipe.status === "published") {
+      notifyFollowers(authorId, recipe);
+    }
+
     return successResponse(res, 201, recipe, null, "Recipe created");
   } catch (error) {
     next(error);
@@ -211,6 +288,11 @@ const updateRecipe = async (req, res, next) => {
       new: true,
       runValidators: true,
     });
+
+    if (recipe.status !== "published" && updated.status === "published") {
+      notifyFollowers(req.user.userId, updated);
+    }
+    
     return successResponse(res, 200, updated, null, "Recipe updated");
   } catch (error) {
     next(error);
@@ -365,6 +447,7 @@ module.exports = {
   listRecipes,
   getRecipeById,
   getRecipesByUser,
+  getPersonalizedFeed,
   myRecipes,
   createRecipe,
   updateRecipe,

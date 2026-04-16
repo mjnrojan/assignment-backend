@@ -12,10 +12,13 @@ const socialRoutes = require("./routes/social.routes");
 const adminRoutes = require("./routes/admin.routes");
 const analyticsRoutes = require("./routes/analytics.routes");
 const searchRoutes = require("./routes/search.routes");
+const notificationRoutes = require("./routes/notification.routes");
 const sanitise = require("./middleware/sanitise");
+const { generalRateLimiter } = require("./middleware/rateLimiter");
 const errorHandler = require("./middleware/errorHandler");
 
 const app = express();
+app.use(generalRateLimiter);
 
 // Security + CORS middleware
 app.use(helmet());
@@ -53,13 +56,14 @@ app.get("/", (req, res) => {
 });
 
 // API routes
-app.use("/api/users", authRoutes);
+app.use("/api/auth", authRoutes);
 app.use("/api/profiles", profileRoutes);
 app.use("/api/recipes", recipeRoutes);
 app.use("/api/social", socialRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/search", searchRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 // Static files for uploads
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));

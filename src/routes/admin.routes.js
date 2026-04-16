@@ -20,5 +20,7 @@ router.delete("/content/:contentId", controller.deleteContent);
 
 router.get("/audit-log", controller.auditLog);
 router.get("/dashboard-stats", controller.dashboardStats);
+router.get("/disputes", controller.listDisputes);
+router.patch("/disputes/:disputeId/resolve", controller.resolveDispute);
 
 module.exports = router;

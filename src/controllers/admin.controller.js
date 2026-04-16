@@ -232,6 +232,66 @@ const dashboardStats = async (req, res, next) => {
   }
 };
 
+const Dispute = require("../models/dispute.model");
+
+const listDisputes = async (req, res, next) => {
+  try {
+    const status = req.query.status || "pending";
+    const disputes = await Dispute.find({ status })
+      .populate("reporterId", "firstName lastName username")
+      .populate("recipeId", "title slug status")
+      .sort("-createdAt");
+    
+    return successResponse(res, 200, disputes, null, "Dispute list");
+  } catch (error) {
+    next(error);
+  }
+};
+
+const resolveDispute = async (req, res, next) => {
+  try {
+    const { disputeId } = req.params;
+    const { actionTaken, notes } = req.body;
+
+    const dispute = await Dispute.findById(disputeId);
+    if (!dispute) return errorResponse(res, 404, "Dispute not found", "NOT_FOUND");
+
+    dispute.status = "resolved";
+    dispute.resolution = {
+      actionTaken,
+      notes,
+      resolvedBy: req.user.userId,
+      resolvedAt: new Date(),
+    };
+
+    await dispute.save();
+
+    // If action was content removal, update the recipe or comment
+    if (actionTaken === "Content Removed") {
+      if (dispute.targetType === "Comment") {
+        const comment = await Comment.findByIdAndDelete(dispute.commentId);
+        if (comment) {
+          await Recipe.findByIdAndUpdate(comment.recipeId, { $inc: { commentCount: -1 } });
+        }
+      } else {
+        await Recipe.findByIdAndUpdate(dispute.recipeId, { status: "rejected", isFlagged: false });
+      }
+    }
+
+    await writeAuditLog({
+      adminId: req.user.userId,
+      action: "RESOLVE_DISPUTE",
+      targetType: "Dispute",
+      targetId: dispute._id,
+      details: `Dispute resolved with action: ${actionTaken}`,
+    });
+
+    return successResponse(res, 200, dispute, null, "Dispute resolved");
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   listUsers,
   getUserById,
@@ -244,4 +304,6 @@ module.exports = {
   deleteContent,
   auditLog,
   dashboardStats,
+  listDisputes,
+  resolveDispute,
 };

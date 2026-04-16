@@ -6,11 +6,14 @@ const { recipeImageUpload } = require("../middleware/upload");
 
 const router = express.Router();
 
-// Public (with optional auth for privacy checks)
+// Public (anyone can see the teaser feed)
 router.get("/", optionalAuth, controller.listRecipes);
+router.get("/feed", optionalAuth, controller.getPersonalizedFeed);
 router.get("/user/:userId", optionalAuth, controller.getRecipesByUser);
-router.get("/:recipeId", optionalAuth, controller.getRecipeById);
-router.post("/:recipeId/share", controller.shareRecipe);
+
+// Authenticated — Must be logged in to view full details or share
+router.get("/:recipeId", verifyToken, controller.getRecipeById);
+router.post("/:recipeId/share", verifyToken, controller.shareRecipe);
 
 // Authenticated — any user can post
 router.get("/my/all", verifyToken, controller.myRecipes);
