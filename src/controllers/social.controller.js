@@ -214,6 +214,43 @@ const unlikeRecipe = async (req, res, next) => {
   }
 };
 
+const likeComment = async (req, res, next) => {
+  try {
+    const { commentId } = req.params;
+    const userId = req.user.userId;
+
+    const existing = await Like.findOne({ userId, commentId });
+    if (existing) {
+      return errorResponse(res, 400, "Comment already liked", "ALREADY_LIKED");
+    }
+
+    await Like.create({ userId, commentId });
+    const comment = await Comment.findByIdAndUpdate(commentId, { $inc: { likeCount: 1 } });
+    if (!comment) return errorResponse(res, 404, "Comment not found", "NOT_FOUND");
+
+    return successResponse(res, 201, null, null, "Comment liked");
+  } catch (error) {
+    next(error);
+  }
+};
+
+const unlikeComment = async (req, res, next) => {
+  try {
+    const { commentId } = req.params;
+    const userId = req.user.userId;
+
+    const deleted = await Like.findOneAndDelete({ userId, commentId });
+    if (!deleted) {
+      return errorResponse(res, 404, "Like not found", "NOT_FOUND");
+    }
+
+    await Comment.findByIdAndUpdate(commentId, { $inc: { likeCount: -1 } });
+    return successResponse(res, 200, null, null, "Comment like removed");
+  } catch (error) {
+    next(error);
+  }
+};
+
 // ─── COMMENT ───────────────────────────────────────────
 
 const addComment = async (req, res, next) => {
@@ -268,19 +305,23 @@ const addComment = async (req, res, next) => {
 const getComments = async (req, res, next) => {
   try {
     const { recipeId } = req.params;
-    const page = Number(req.query.page || 1);
-    const limit = Number(req.query.limit || 20);
-    const skip = (page - 1) * limit;
+    const { sortBy = "newest", page = 1, limit = 20 } = req.query;
+    const skip = (Number(page) - 1) * Number(limit);
+
+    // Determine sort order
+    let sortCriteria = "-createdAt"; // Default newest
+    if (sortBy === "oldest") sortCriteria = "createdAt";
+    if (sortBy === "popular") sortCriteria = "-likeCount -createdAt";
 
     const total = await Comment.countDocuments({ recipeId });
     const comments = await Comment.find({ recipeId })
-      .sort("-createdAt")
+      .sort(sortCriteria)
       .skip(skip)
-      .limit(limit)
-      .populate("userId", "firstName lastName username");
+      .limit(Number(limit))
+      .populate("userId", "firstName lastName username profileImage");
 
     return successResponse(res, 200, comments,
-      { page, limit, total, pages: Math.ceil(total / limit) },
+      { page: Number(page), limit: Number(limit), total, pages: Math.ceil(total / Number(limit)) },
       "Comments list"
     );
   } catch (error) {
@@ -451,6 +492,8 @@ module.exports = {
   getPendingRequests,
   likeRecipe,
   unlikeRecipe,
+  likeComment,
+  unlikeComment,
   addComment,
   getComments,
   deleteComment,

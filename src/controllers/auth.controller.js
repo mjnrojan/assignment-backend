@@ -2,7 +2,6 @@ const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const { OAuth2Client } = require("google-auth-library");
 const User = require("../models/user.model");
-const Profile = require("../models/profile.model");
 const { 
   generateAccessToken, 
   generateRefreshToken, 
@@ -43,8 +42,7 @@ const register = async (req, res, next) => {
     const verificationToken = generateVerificationToken({ userId: user._id });
     user.verificationToken = hashToken(verificationToken);
 
-    // Auto-create a blank profile for every new user
-    await Profile.create({ userId: user._id });
+
 
     // Generate session tokens
     const accessToken = generateAccessToken({ userId: user._id, role: user.role });
@@ -93,7 +91,7 @@ const googleLogin = async (req, res, next) => {
         isEmailVerified: true, // Google emails are already verified
         profileImage: picture,
       });
-      await Profile.create({ userId: user._id });
+
       await sendWelcomeEmail(user);
     }
 
@@ -265,7 +263,7 @@ const deleteMe = async (req, res, next) => {
       return errorResponse(res, 401, "Invalid password", "INVALID_CREDENTIALS");
     }
 
-    await Profile.findOneAndDelete({ userId: req.user.userId });
+
     await User.findByIdAndDelete(req.user.userId);
     return successResponse(res, 200, null, null, "Account deleted successfully");
   } catch (error) {

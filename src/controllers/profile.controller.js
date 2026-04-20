@@ -1,4 +1,3 @@
-const Profile = require("../models/profile.model");
 const Recipe = require("../models/recipe.model");
 const User = require("../models/user.model");
 const Follow = require("../models/follow.model");
@@ -12,7 +11,6 @@ const getPublicProfile = async (req, res, next) => {
       return errorResponse(res, 404, "User not found", "NOT_FOUND");
     }
 
-    const profile = await Profile.findOne({ userId: user._id });
     const recipeCount = await Recipe.countDocuments({ authorId: user._id, status: "published" });
 
     // Check if requester follows this user
@@ -39,8 +37,12 @@ const getPublicProfile = async (req, res, next) => {
         isProfessional: user.isProfessional,
         followerCount: user.followerCount,
         followingCount: user.followingCount,
+        biography: user.biography,
+        profileImage: user.profileImage,
+        socialLinks: user.socialLinks,
+        specialisations: user.specialisations,
+        businessCategory: user.businessCategory,
       },
-      profile: profile || {},
       recipeCount,
       isFollowing,
       followStatus,
@@ -52,11 +54,11 @@ const getPublicProfile = async (req, res, next) => {
 
 const getMyProfile = async (req, res, next) => {
   try {
-    const profile = await Profile.findOne({ userId: req.user.userId });
-    if (!profile) {
-      return errorResponse(res, 404, "Profile not found", "NOT_FOUND");
-    }
     const user = await User.findById(req.user.userId);
+    if (!user) {
+      return errorResponse(res, 404, "User not found", "NOT_FOUND");
+    }
+    
     const recipeCount = await Recipe.countDocuments({ authorId: req.user.userId });
     const publishedCount = await Recipe.countDocuments({ authorId: req.user.userId, status: "published" });
     const draftCount = await Recipe.countDocuments({ authorId: req.user.userId, status: { $in: ["draft", "pending", "rejected"] } });
@@ -66,7 +68,6 @@ const getMyProfile = async (req, res, next) => {
       200,
       {
         user,
-        profile,
         stats: { recipeCount, publishedCount, draftCount },
       },
       null,
@@ -87,15 +88,15 @@ const updateProfile = async (req, res, next) => {
     if (contactEmail !== undefined) update.contactEmail = contactEmail;
     if (businessCategory !== undefined) update.businessCategory = businessCategory;
 
-    const profile = await Profile.findOneAndUpdate(
-      { userId: req.user.userId },
+    const user = await User.findByIdAndUpdate(
+      req.user.userId,
       { $set: update },
       { new: true, runValidators: true }
     );
-    if (!profile) {
-      return errorResponse(res, 404, "Profile not found", "NOT_FOUND");
+    if (!user) {
+      return errorResponse(res, 404, "User not found", "NOT_FOUND");
     }
-    return successResponse(res, 200, profile, null, "Profile updated");
+    return successResponse(res, 200, user, null, "Profile updated");
   } catch (error) {
     next(error);
   }
@@ -108,9 +109,9 @@ const uploadAvatar = async (req, res, next) => {
       return errorResponse(res, 400, "Avatar file is required", "VALIDATION_ERROR");
     }
 
-    const profile = await Profile.findOne({ userId: req.user.userId });
-    if (!profile) {
-      return errorResponse(res, 404, "Profile not found", "NOT_FOUND");
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return errorResponse(res, 404, "User not found", "NOT_FOUND");
     }
 
     const result = await uploadBuffer({
@@ -118,15 +119,15 @@ const uploadAvatar = async (req, res, next) => {
       folder: "recipenest/avatars",
     });
 
-    if (profile.profileImagePublicId) {
-      await deleteAsset(profile.profileImagePublicId);
+    if (user.profileImagePublicId) {
+      await deleteAsset(user.profileImagePublicId);
     }
 
-    profile.profileImage = result.secure_url;
-    profile.profileImagePublicId = result.public_id;
-    await profile.save();
+    user.profileImage = result.secure_url;
+    user.profileImagePublicId = result.public_id;
+    await user.save();
 
-    return successResponse(res, 200, profile, null, "Avatar uploaded");
+    return successResponse(res, 200, user, null, "Avatar uploaded");
   } catch (error) {
     next(error);
   }

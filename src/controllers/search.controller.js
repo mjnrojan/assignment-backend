@@ -1,5 +1,4 @@
 const Recipe = require("../models/recipe.model");
-const Profile = require("../models/profile.model");
 const User = require("../models/user.model");
 const Category = require("../models/category.model");
 const { successResponse } = require("../utils/apiResponse");
@@ -31,23 +30,18 @@ const search = async (req, res, next) => {
           { lastName: { $regex: q, $options: "i" } },
           { username: { $regex: q, $options: "i" } },
         ],
-      }).select("firstName lastName username isProfessional");
+      }).select("firstName lastName username isProfessional profileImage");
 
-      const userResults = await Promise.all(
-        users.map(async (u) => {
-          const profile = await Profile.findOne({ userId: u._id }).select("profileImage biography");
-          return {
-            type: "user",
-            item: {
-              userId: u._id,
-              name: `${u.firstName} ${u.lastName}`.trim(),
-              username: u.username,
-              isProfessional: u.isProfessional,
-              profileImage: profile?.profileImage || "",
-            },
-          };
-        })
-      );
+      const userResults = users.map((u) => ({
+        type: "user",
+        item: {
+          userId: u._id,
+          name: `${u.firstName} ${u.lastName}`.trim(),
+          username: u.username,
+          isProfessional: u.isProfessional,
+          profileImage: u.profileImage || "",
+        },
+      }));
       results = results.concat(userResults);
     }
 

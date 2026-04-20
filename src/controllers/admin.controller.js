@@ -1,6 +1,5 @@
 const User = require("../models/user.model");
 const Recipe = require("../models/recipe.model");
-const Profile = require("../models/profile.model");
 const AuditLog = require("../models/auditLog.model");
 const { writeAuditLog } = require("../services/audit.service");
 const { sendModerationEmail } = require("../services/email.service");
@@ -82,7 +81,7 @@ const deleteUser = async (req, res, next) => {
     const user = await User.findByIdAndDelete(req.params.userId);
     if (!user) return errorResponse(res, 404, "User not found", "NOT_FOUND");
 
-    await Profile.findOneAndDelete({ userId: user._id });
+
     await Recipe.deleteMany({ authorId: user._id });
 
     await writeAuditLog({

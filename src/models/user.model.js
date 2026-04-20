@@ -16,6 +16,21 @@ const UserSchema = new mongoose.Schema(
     isProfessional: { type: Boolean, default: false },
     followerCount: { type: Number, default: 0 },
     followingCount: { type: Number, default: 0 },
+    
+    // Profile fields merged from Profile model
+    biography: { type: String, default: "" },
+    profileImage: { type: String, default: "" },
+    profileImagePublicId: { type: String, default: "" },
+    socialLinks: {
+      instagram: String,
+      facebook: String,
+      twitter: String,
+      website: String,
+    },
+    specialisations: [{ type: String, trim: true }],
+    contactEmail: { type: String, trim: true },
+    businessCategory: { type: String, default: "" },
+
     resetPasswordToken: { type: String, select: false },
     resetPasswordExpires: { type: Date },
     verificationToken: { type: String, select: false },
