@@ -25,12 +25,11 @@ const DisputeSchema = new mongoose.Schema(
     },
     reason: {
       type: String,
-      enum: ["Copyright", "Spam", "Inappropriate Content", "Harassment", "Other"],
       required: true,
     },
     details: {
       type: String,
-      required: true,
+      default: "",
     },
     status: {
       type: String,
@@ -49,5 +48,6 @@ const DisputeSchema = new mongoose.Schema(
 
 DisputeSchema.index({ status: 1 });
 DisputeSchema.index({ recipeId: 1 });
+DisputeSchema.index({ targetType: 1, status: 1 });
 
 module.exports = mongoose.model("Dispute", DisputeSchema);

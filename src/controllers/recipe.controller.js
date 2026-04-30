@@ -73,12 +73,31 @@ const listRecipes = async (req, res, next) => {
       .sort(sort)
       .skip(skip)
       .limit(limit)
-      .populate("authorId", "firstName lastName username isProfessional");
+      .populate("authorId", "firstName lastName username isProfessional profileImage");
+
+    // Enrich with per-user isLiked / isSaved flags
+    let likedSet = new Set();
+    let savedSet = new Set();
+    if (req.user) {
+      const recipeIds = recipes.map((r) => r._id);
+      const [userLikes, userSaves] = await Promise.all([
+        Like.find({ userId: req.user.userId, recipeId: { $in: recipeIds } }).select("recipeId"),
+        Save.find({ userId: req.user.userId, recipeId: { $in: recipeIds } }).select("recipeId"),
+      ]);
+      likedSet = new Set(userLikes.map((l) => l.recipeId.toString()));
+      savedSet = new Set(userSaves.map((s) => s.recipeId.toString()));
+    }
+
+    const enriched = recipes.map((r) => ({
+      ...r.toObject(),
+      isLiked: likedSet.has(r._id.toString()),
+      isSaved: savedSet.has(r._id.toString()),
+    }));
 
     return successResponse(
       res,
       200,
-      recipes,
+      enriched,
       { page, limit, total, pages: Math.ceil(total / limit) },
       "Recipes list"
     );
@@ -173,7 +192,26 @@ const getRecipesByUser = async (req, res, next) => {
       status: "published",
     }).sort("-createdAt");
 
-    return successResponse(res, 200, recipes, null, "Recipes by user");
+    // Enrich with per-user isLiked / isSaved flags
+    let likedSet = new Set();
+    let savedSet = new Set();
+    if (req.user) {
+      const recipeIds = recipes.map((r) => r._id);
+      const [userLikes, userSaves] = await Promise.all([
+        Like.find({ userId: req.user.userId, recipeId: { $in: recipeIds } }).select("recipeId"),
+        Save.find({ userId: req.user.userId, recipeId: { $in: recipeIds } }).select("recipeId"),
+      ]);
+      likedSet = new Set(userLikes.map((l) => l.recipeId.toString()));
+      savedSet = new Set(userSaves.map((s) => s.recipeId.toString()));
+    }
+
+    const enriched = recipes.map((r) => ({
+      ...r.toObject(),
+      isLiked: likedSet.has(r._id.toString()),
+      isSaved: savedSet.has(r._id.toString()),
+    }));
+
+    return successResponse(res, 200, enriched, null, "Recipes by user");
   } catch (error) {
     next(error);
   }
@@ -185,9 +223,12 @@ const getRecipesByUser = async (req, res, next) => {
  */
 const getPersonalizedFeed = async (req, res, next) => {
   try {
-    const page = Number(req.query.page || 1);
-    const limit = Number(req.query.limit || 10);
-    const skip = (page - 1) * limit;
+    const limit = Number(req.query.limit || 20);
+    const populate = "firstName lastName username isProfessional profileImage";
+
+    // IDs to exclude from the discovery tier (private accounts)
+    const privateUsers = await User.find({ isPrivate: true }).select("_id");
+    const privateIds = privateUsers.map((u) => u._id.toString());
 
     let followingIds = [];
     if (req.user) {
@@ -195,42 +236,62 @@ const getPersonalizedFeed = async (req, res, next) => {
         followerId: req.user.userId,
         status: "accepted",
       }).select("followingId");
-      followingIds = following.map(f => f.followingId);
+      followingIds = following.map((f) => f.followingId.toString());
     }
 
-    // 1. Calculate Priority Feed (Following + Own Content)
-    const priorityQuery = {
-      status: "published",
-      authorId: { $in: [...followingIds, req.user?.userId].filter(Boolean) }
-    };
+    const ownId = req.user?.userId?.toString();
 
-    // 2. Discover Trending (Popular content not from following)
+    // Tier 1 — following + own recipes
+    const priorityIds = [...followingIds, ownId].filter(Boolean);
+    const priorityQuery = { status: "published", authorId: { $in: priorityIds } };
+
+    // Tier 2 — everyone else who is not private
+    const excludeFromDiscovery = [...new Set([...priorityIds, ...privateIds])];
     const discoveryQuery = {
       status: "published",
-      authorId: { $nin: priorityQuery.authorId },
-      likeCount: { $gte: 2 } // Only show "proven" content in trending
+      authorId: { $nin: excludeFromDiscovery },
     };
 
-    // Exclude private accounts from the discovery query
-    const privateUsers = await User.find({ isPrivate: true }).select("_id");
-    const privateIds = privateUsers.map(u => u._id);
-    discoveryQuery.authorId.$nin.push(...privateIds);
-
-    // Initial load: Mix of both
     const [followingRecipes, trendingRecipes] = await Promise.all([
-      Recipe.find(priorityQuery).sort("-createdAt").limit(limit).populate("authorId", "firstName lastName username"),
-      Recipe.find(discoveryQuery).sort("-likeCount -createdAt").limit(limit).populate("authorId", "firstName lastName username")
+      Recipe.find(priorityQuery)
+        .sort("-createdAt")
+        .limit(limit)
+        .populate("authorId", populate),
+      Recipe.find(discoveryQuery)
+        .sort("-likeCount -createdAt")
+        .limit(limit)
+        .populate("authorId", populate),
     ]);
 
-    // Simple interleaving for a dynamic feel
-    const feed = [];
+    // Interleave both tiers for variety
+    const rawFeed = [];
     const max = Math.max(followingRecipes.length, trendingRecipes.length);
     for (let i = 0; i < max; i++) {
-        if (followingRecipes[i]) feed.push(followingRecipes[i]);
-        if (trendingRecipes[i]) feed.push(trendingRecipes[i]);
+      if (followingRecipes[i]) rawFeed.push(followingRecipes[i]);
+      if (trendingRecipes[i]) rawFeed.push(trendingRecipes[i]);
+    }
+    const sliced = rawFeed.slice(0, limit);
+
+    // Enrich with per-user isLiked / isSaved flags (same as listRecipes)
+    let likedSet = new Set();
+    let savedSet = new Set();
+    if (req.user) {
+      const recipeIds = sliced.map((r) => r._id);
+      const [userLikes, userSaves] = await Promise.all([
+        Like.find({ userId: req.user.userId, recipeId: { $in: recipeIds } }).select("recipeId"),
+        Save.find({ userId: req.user.userId, recipeId: { $in: recipeIds } }).select("recipeId"),
+      ]);
+      likedSet = new Set(userLikes.map((l) => l.recipeId.toString()));
+      savedSet = new Set(userSaves.map((s) => s.recipeId.toString()));
     }
 
-    return successResponse(res, 200, feed.slice(0, limit), null, "Personalized feed");
+    const feed = sliced.map((r) => ({
+      ...r.toObject(),
+      isLiked: likedSet.has(r._id.toString()),
+      isSaved: savedSet.has(r._id.toString()),
+    }));
+
+    return successResponse(res, 200, feed, null, "Personalized feed");
   } catch (error) {
     next(error);
   }
@@ -239,7 +300,19 @@ const getPersonalizedFeed = async (req, res, next) => {
 const myRecipes = async (req, res, next) => {
   try {
     const recipes = await Recipe.find({ authorId: req.user.userId }).sort("-updatedAt");
-    return successResponse(res, 200, recipes, null, "My recipes");
+    const recipeIds = recipes.map((r) => r._id);
+    const [userLikes, userSaves] = await Promise.all([
+      Like.find({ userId: req.user.userId, recipeId: { $in: recipeIds } }).select("recipeId"),
+      Save.find({ userId: req.user.userId, recipeId: { $in: recipeIds } }).select("recipeId"),
+    ]);
+    const likedSet = new Set(userLikes.map((l) => l.recipeId.toString()));
+    const savedSet = new Set(userSaves.map((s) => s.recipeId.toString()));
+    const enriched = recipes.map((r) => ({
+      ...r.toObject(),
+      isLiked: likedSet.has(r._id.toString()),
+      isSaved: savedSet.has(r._id.toString()),
+    }));
+    return successResponse(res, 200, enriched, null, "My recipes");
   } catch (error) {
     next(error);
   }
@@ -331,35 +404,11 @@ const shareRecipe = async (req, res, next) => {
   }
 };
 
-const uploadHeroImage = async (req, res, next) => {
+// Upload multiple final-dish gallery images (up to 5). Sets mainImage to first if not yet set.
+const uploadGalleryImages = async (req, res, next) => {
   try {
-    const file = req.files?.hero?.[0];
-    if (!file) return errorResponse(res, 400, "hero image required", "VALIDATION_ERROR");
-    const recipe = await Recipe.findById(req.params.recipeId);
-    if (!recipe) return errorResponse(res, 404, "Recipe not found", "NOT_FOUND");
-    if (recipe.authorId.toString() !== req.user.userId) {
-      return errorResponse(res, 403, "Not authorized", "FORBIDDEN");
-    }
-
-    const result = await uploadBuffer({
-      buffer: file.buffer,
-      folder: `recipenest/recipes/${recipe._id}`,
-    });
-    if (recipe.mainImagePublicId) await deleteAsset(recipe.mainImagePublicId);
-
-    recipe.mainImage = result.secure_url;
-    recipe.mainImagePublicId = result.public_id;
-    await recipe.save();
-    return successResponse(res, 200, recipe, null, "Hero image uploaded");
-  } catch (error) {
-    next(error);
-  }
-};
-
-const uploadStepImages = async (req, res, next) => {
-  try {
-    const files = req.files?.steps || [];
-    if (files.length === 0) return errorResponse(res, 400, "steps images required", "VALIDATION_ERROR");
+    const files = req.files?.gallery || [];
+    if (files.length === 0) return errorResponse(res, 400, "At least one gallery image required", "VALIDATION_ERROR");
     const recipe = await Recipe.findById(req.params.recipeId);
     if (!recipe) return errorResponse(res, 404, "Recipe not found", "NOT_FOUND");
     if (recipe.authorId.toString() !== req.user.userId) {
@@ -369,40 +418,82 @@ const uploadStepImages = async (req, res, next) => {
     for (const file of files) {
       const result = await uploadBuffer({
         buffer: file.buffer,
-        folder: `recipenest/recipes/${recipe._id}`,
+        folder: `recipenest/recipes/${recipe._id}/gallery`,
       });
-      recipe.stepImages.push(result.secure_url);
-      recipe.stepImagePublicIds.push(result.public_id);
+      recipe.galleryImages.push(result.secure_url);
+      recipe.galleryImagePublicIds.push(result.public_id);
     }
-    recipe.stepImages = recipe.stepImages.slice(0, 5);
-    recipe.stepImagePublicIds = recipe.stepImagePublicIds.slice(0, 5);
+    recipe.galleryImages = recipe.galleryImages.slice(0, 5);
+    recipe.galleryImagePublicIds = recipe.galleryImagePublicIds.slice(0, 5);
+
+    // Auto-set cover to first gallery image if not yet set
+    if (!recipe.mainImage && recipe.galleryImages.length > 0) {
+      recipe.mainImage = recipe.galleryImages[0];
+      recipe.mainImagePublicId = recipe.galleryImagePublicIds[0];
+    }
+
     await recipe.save();
-    return successResponse(res, 200, recipe, null, "Step images uploaded");
+    return successResponse(res, 200, recipe, null, "Gallery images uploaded");
   } catch (error) {
     next(error);
   }
 };
 
-const uploadResultImage = async (req, res, next) => {
+// Set which gallery image is the cover (detail hero + feed thumbnail)
+const setCoverImage = async (req, res, next) => {
   try {
-    const file = req.files?.result?.[0];
-    if (!file) return errorResponse(res, 400, "result image required", "VALIDATION_ERROR");
     const recipe = await Recipe.findById(req.params.recipeId);
     if (!recipe) return errorResponse(res, 404, "Recipe not found", "NOT_FOUND");
     if (recipe.authorId.toString() !== req.user.userId) {
       return errorResponse(res, 403, "Not authorized", "FORBIDDEN");
     }
 
-    const result = await uploadBuffer({
-      buffer: file.buffer,
-      folder: `recipenest/recipes/${recipe._id}`,
-    });
-    if (recipe.resultImagePublicId) await deleteAsset(recipe.resultImagePublicId);
+    const index = Number(req.body.index);
+    if (Number.isNaN(index) || index < 0 || index >= recipe.galleryImages.length) {
+      return errorResponse(res, 400, "Invalid gallery index", "VALIDATION_ERROR");
+    }
 
-    recipe.resultImage = result.secure_url;
-    recipe.resultImagePublicId = result.public_id;
+    recipe.mainImage = recipe.galleryImages[index];
+    recipe.mainImagePublicId = recipe.galleryImagePublicIds[index];
     await recipe.save();
-    return successResponse(res, 200, recipe, null, "Result image uploaded");
+    return successResponse(res, 200, recipe, null, "Cover image updated");
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Upload step images. stepMap (JSON array) maps file index → step array index.
+// e.g. files=[img0, img1], stepMap=[0, 2] means img0→steps[0], img1→steps[2]
+const uploadStepImages = async (req, res, next) => {
+  try {
+    const files = req.files?.steps || [];
+    if (files.length === 0) return errorResponse(res, 400, "Step images required", "VALIDATION_ERROR");
+    const recipe = await Recipe.findById(req.params.recipeId);
+    if (!recipe) return errorResponse(res, 404, "Recipe not found", "NOT_FOUND");
+    if (recipe.authorId.toString() !== req.user.userId) {
+      return errorResponse(res, 403, "Not authorized", "FORBIDDEN");
+    }
+
+    let stepMap;
+    try {
+      stepMap = JSON.parse(req.body.stepMap || "[]");
+    } catch {
+      stepMap = files.map((_, i) => i);
+    }
+
+    for (let i = 0; i < files.length; i++) {
+      const stepIndex = stepMap[i] ?? i;
+      if (stepIndex < 0 || stepIndex >= recipe.steps.length) continue;
+      const result = await uploadBuffer({
+        buffer: files[i].buffer,
+        folder: `recipenest/recipes/${recipe._id}/steps`,
+      });
+      recipe.steps[stepIndex].imageUrl = result.secure_url;
+    }
+
+    recipe.markModified("steps");
+    await recipe.save();
+    return successResponse(res, 200, recipe, null, "Step images uploaded");
   } catch (error) {
     next(error);
   }
@@ -417,27 +508,52 @@ const deleteImageSlot = async (req, res, next) => {
       return errorResponse(res, 403, "Not authorized", "FORBIDDEN");
     }
 
-    if (slot === "hero") {
-      await deleteAsset(recipe.mainImagePublicId);
-      recipe.mainImage = "";
-      recipe.mainImagePublicId = "";
-    } else if (slot === "result") {
-      await deleteAsset(recipe.resultImagePublicId);
-      recipe.resultImage = "";
-      recipe.resultImagePublicId = "";
-    } else {
-      const index = Number(slot);
-      if (Number.isNaN(index) || index < 0 || index >= recipe.stepImages.length) {
+    if (slot.startsWith("gallery_")) {
+      const index = Number(slot.replace("gallery_", ""));
+      if (Number.isNaN(index) || index < 0 || index >= recipe.galleryImages.length) {
         return errorResponse(res, 400, "Invalid slot", "VALIDATION_ERROR");
       }
-      const publicId = recipe.stepImagePublicIds[index];
-      await deleteAsset(publicId);
-      recipe.stepImages.splice(index, 1);
-      recipe.stepImagePublicIds.splice(index, 1);
+      await deleteAsset(recipe.galleryImagePublicIds[index]);
+      recipe.galleryImages.splice(index, 1);
+      recipe.galleryImagePublicIds.splice(index, 1);
+      // If deleted image was the cover, reset to first remaining or clear
+      if (recipe.mainImage === recipe.galleryImages[index]) {
+        recipe.mainImage = recipe.galleryImages[0] || "";
+        recipe.mainImagePublicId = recipe.galleryImagePublicIds[0] || "";
+      }
+    } else if (slot.startsWith("step_")) {
+      const stepIndex = Number(slot.replace("step_", ""));
+      if (stepIndex >= 0 && stepIndex < recipe.steps.length) {
+        recipe.steps[stepIndex].imageUrl = "";
+        recipe.markModified("steps");
+      }
     }
 
     await recipe.save();
     return successResponse(res, 200, recipe, null, "Image removed");
+  } catch (error) {
+    next(error);
+  }
+};
+
+const archiveRecipe = async (req, res, next) => {
+  try {
+    const { recipeId } = req.params;
+    const recipe = await Recipe.findOne({ _id: recipeId, authorId: req.user.userId });
+    if (!recipe) return errorResponse(res, 404, "Recipe not found", "NOT_FOUND");
+
+    const isArchived = recipe.status === "archived";
+    if (isArchived) {
+      recipe.status = recipe.preArchiveStatus || "published";
+      recipe.preArchiveStatus = "";
+    } else {
+      recipe.preArchiveStatus = recipe.status;
+      recipe.status = "archived";
+    }
+    await recipe.save();
+    return successResponse(res, 200, recipe, null,
+      isArchived ? `Recipe restored to ${recipe.status}` : "Recipe archived"
+    );
   } catch (error) {
     next(error);
   }
@@ -453,8 +569,9 @@ module.exports = {
   updateRecipe,
   deleteRecipe,
   shareRecipe,
-  uploadHeroImage,
+  uploadGalleryImages,
+  setCoverImage,
   uploadStepImages,
-  uploadResultImage,
   deleteImageSlot,
+  archiveRecipe,
 };

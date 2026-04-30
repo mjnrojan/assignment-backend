@@ -6,7 +6,12 @@ const { successResponse, errorResponse } = require("../utils/apiResponse");
 
 const getPublicProfile = async (req, res, next) => {
   try {
-    const user = await User.findById(req.params.userId);
+    const param = req.params.userId;
+    // Accept either a MongoDB ObjectId or a username string
+    const isObjectId = /^[a-f\d]{24}$/i.test(param);
+    const user = isObjectId
+      ? await User.findById(param)
+      : await User.findOne({ username: param });
     if (!user) {
       return errorResponse(res, 404, "User not found", "NOT_FOUND");
     }
@@ -80,13 +85,24 @@ const getMyProfile = async (req, res, next) => {
 
 const updateProfile = async (req, res, next) => {
   try {
-    const { biography, socialLinks, specialisations, contactEmail, businessCategory } = req.body;
+    const { firstName, lastName, username, biography, socialLinks, specialisations, contactEmail, businessCategory } = req.body;
     const update = {};
+    if (firstName !== undefined) update.firstName = firstName;
+    if (lastName !== undefined) update.lastName = lastName;
     if (biography !== undefined) update.biography = biography;
     if (socialLinks !== undefined) update.socialLinks = socialLinks;
     if (specialisations !== undefined) update.specialisations = specialisations;
     if (contactEmail !== undefined) update.contactEmail = contactEmail;
     if (businessCategory !== undefined) update.businessCategory = businessCategory;
+    if (username !== undefined) {
+      const cleaned = username.toLowerCase().trim().replace(/[^a-z0-9_.]/g, '');
+      if (cleaned.length < 3 || cleaned.length > 30) {
+        return errorResponse(res, 400, "Username must be 3–30 characters", "VALIDATION_ERROR");
+      }
+      const taken = await User.findOne({ username: cleaned, _id: { $ne: req.user.userId } });
+      if (taken) return errorResponse(res, 400, "Username already taken", "USERNAME_TAKEN");
+      update.username = cleaned;
+    }
 
     const user = await User.findByIdAndUpdate(
       req.user.userId,
@@ -133,9 +149,40 @@ const uploadAvatar = async (req, res, next) => {
   }
 };
 
+const listProfiles = async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+
+    const query = {};
+    if (req.query.professional === "true") {
+      query.isProfessional = true;
+    }
+
+    const users = await User.find(query)
+      .select("firstName lastName username profileImage followerCount isProfessional biography")
+      .sort({ followerCount: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await User.countDocuments(query);
+
+    return successResponse(res, 200, users, {
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit),
+    }, "Profiles list");
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getPublicProfile,
   getMyProfile,
   updateProfile,
   uploadAvatar,
+  listProfiles,
 };

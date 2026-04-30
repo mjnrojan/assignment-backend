@@ -1,9 +1,6 @@
 const Notification = require("../models/notification.model");
 const { successResponse, errorResponse } = require("../utils/apiResponse");
 
-/**
- * List notifications for current user
- */
 const listNotifications = async (req, res, next) => {
   try {
     const notifications = await Notification.find({ recipientId: req.user.userId })
@@ -17,9 +14,6 @@ const listNotifications = async (req, res, next) => {
   }
 };
 
-/**
- * Mark a single notification as read
- */
 const markRead = async (req, res, next) => {
   try {
     const notification = await Notification.findOneAndUpdate(
@@ -38,9 +32,6 @@ const markRead = async (req, res, next) => {
   }
 };
 
-/**
- * Mark all visible notifications as read
- */
 const markAllRead = async (req, res, next) => {
   try {
     await Notification.updateMany(
@@ -53,8 +44,36 @@ const markAllRead = async (req, res, next) => {
   }
 };
 
+const deleteOne = async (req, res, next) => {
+  try {
+    const deleted = await Notification.findOneAndDelete({
+      _id: req.params.id,
+      recipientId: req.user.userId,
+    });
+
+    if (!deleted) {
+      return errorResponse(res, 404, "Notification not found", "NOT_FOUND");
+    }
+
+    return successResponse(res, 200, null, null, "Notification deleted");
+  } catch (error) {
+    next(error);
+  }
+};
+
+const clearAll = async (req, res, next) => {
+  try {
+    await Notification.deleteMany({ recipientId: req.user.userId });
+    return successResponse(res, 200, null, null, "All notifications cleared");
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   listNotifications,
   markRead,
   markAllRead,
+  deleteOne,
+  clearAll,
 };

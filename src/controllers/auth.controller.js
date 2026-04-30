@@ -1,11 +1,10 @@
-const crypto = require("crypto");
-const jwt = require("jsonwebtoken");
+﻿const jwt = require("jsonwebtoken");
 const { OAuth2Client } = require("google-auth-library");
 const User = require("../models/user.model");
-const { 
-  generateAccessToken, 
-  generateRefreshToken, 
-  generateVerificationToken 
+const {
+  generateAccessToken,
+  generateRefreshToken,
+  generateVerificationToken
 } = require("../utils/generateToken");
 const hashToken = require("../utils/hashToken");
 const { JWT_VERIFICATION_SECRET, GOOGLE_CLIENT_ID } = require("../config/config");
@@ -21,38 +20,37 @@ const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 const register = async (req, res, next) => {
   try {
     const { firstName, lastName, username, email, password } = req.body;
-    if (!firstName || !lastName || !username || !email || !password) {
+    if (!firstName || !username || !email || !password) {
       return errorResponse(res, 400, "Missing required fields", "VALIDATION_ERROR");
     }
 
-    const exists = await User.findOne({ email: email.toLowerCase() });
+    const exists = await User.findOne({ 
+      $or: [
+        { email: email.toLowerCase() },
+        { username: username.toLowerCase() }
+      ]
+    });
     if (exists) {
-      return errorResponse(res, 400, "User already exists", "USER_EXISTS");
+      return errorResponse(res, 400, "User or email already exists", "USER_EXISTS");
     }
 
     const user = await User.create({
       firstName,
-      lastName,
-      username,
+      lastName: lastName || "",
+      username: username.toLowerCase(),
       email: email.toLowerCase(),
       passwordHash: password,
     });
 
-    // Generate JWT verification token
     const verificationToken = generateVerificationToken({ userId: user._id });
     user.verificationToken = hashToken(verificationToken);
 
-
-
-    // Generate session tokens
     const accessToken = generateAccessToken({ userId: user._id, role: user.role });
     const refreshToken = generateRefreshToken({ userId: user._id });
 
-    // Store hashed refresh token
     user.refreshToken = hashToken(refreshToken);
     await user.save();
 
-    // Only send verification email first for manual signup
     await sendVerificationEmail(user, verificationToken);
 
     return successResponse(
@@ -79,16 +77,21 @@ const googleLogin = async (req, res, next) => {
     const payload = ticket.getPayload();
     const { email, given_name, family_name, picture, sub: googleId } = payload;
 
-    let user = await User.findOne({ email });
+    let user = await User.findOne({ email: email.toLowerCase() });
 
     if (!user) {
-      // Create user if not exists
+      // Generate unique username from googleId digits
+      let username = `user_${googleId.substring(0, 8)}`;
+      for (let len = 9; await User.findOne({ username }) && len <= googleId.length; len++) {
+        username = `user_${googleId.substring(0, len)}`;
+      }
+
       user = await User.create({
-        firstName: given_name,
-        lastName: family_name,
-        email,
-        username: `google_${googleId.substring(0, 8)}`,
-        isEmailVerified: true, // Google emails are already verified
+        firstName: given_name || 'User',
+        lastName: family_name || '',
+        email: email.toLowerCase(),
+        username,
+        isEmailVerified: true,
         profileImage: picture,
       });
 
@@ -109,10 +112,18 @@ const googleLogin = async (req, res, next) => {
 
 const login = async (req, res, next) => {
   try {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email: (email || "").toLowerCase() }).select("+passwordHash");
+    const { email, username, password } = req.body;
+    const identifier = (email || username || "").toLowerCase();
+    
+    const user = await User.findOne({
+      $or: [
+        { email: identifier },
+        { username: identifier }
+      ]
+    }).select("+passwordHash");
+
     if (!user || !(await user.comparePassword(password || ""))) {
-      return errorResponse(res, 401, "Invalid email or password", "INVALID_CREDENTIALS");
+      return errorResponse(res, 401, "Invalid credentials", "INVALID_CREDENTIALS");
     }
 
     const accessToken = generateAccessToken({ userId: user._id, role: user.role });
@@ -140,7 +151,6 @@ const refreshAccessToken = async (req, res, next) => {
       return errorResponse(res, 401, "Invalid or expired refresh token", "INVALID_TOKEN");
     }
 
-    // Optional: Verify JWT validity here if you want extra security
     const accessToken = generateAccessToken({ userId: user._id, role: user.role });
     return successResponse(res, 200, { accessToken }, null, "Token refreshed");
   } catch (error) {
@@ -179,7 +189,6 @@ const resetPassword = async (req, res, next) => {
     const { token } = req.params;
     const { password } = req.body;
 
-    // Verify JWT
     let decoded;
     try {
       decoded = jwt.verify(token, JWT_VERIFICATION_SECRET);
@@ -212,7 +221,6 @@ const verifyEmail = async (req, res, next) => {
   try {
     const { token } = req.params;
 
-    // Verify JWT
     let decoded;
     try {
       decoded = jwt.verify(token, JWT_VERIFICATION_SECRET);
@@ -233,7 +241,6 @@ const verifyEmail = async (req, res, next) => {
     user.verificationToken = undefined;
     await user.save();
 
-    // Send Welcome Email only after email is verified
     await sendWelcomeEmail(user);
 
     return successResponse(res, 200, null, null, "Email verified successfully! You can now log in to your dashboard.");
@@ -263,7 +270,6 @@ const deleteMe = async (req, res, next) => {
       return errorResponse(res, 401, "Invalid password", "INVALID_CREDENTIALS");
     }
 
-
     await User.findByIdAndDelete(req.user.userId);
     return successResponse(res, 200, null, null, "Account deleted successfully");
   } catch (error) {
@@ -273,10 +279,11 @@ const deleteMe = async (req, res, next) => {
 
 const updateSettings = async (req, res, next) => {
   try {
-    const { isPrivate, isProfessional } = req.body;
+    const { isPrivate, isProfessional, savesPublic } = req.body;
     const update = {};
     if (typeof isPrivate === "boolean") update.isPrivate = isPrivate;
     if (typeof isProfessional === "boolean") update.isProfessional = isProfessional;
+    if (typeof savesPublic === "boolean") update.savesPublic = savesPublic;
 
     const user = await User.findByIdAndUpdate(req.user.userId, update, { new: true });
     return successResponse(res, 200, { user }, null, "Settings updated");

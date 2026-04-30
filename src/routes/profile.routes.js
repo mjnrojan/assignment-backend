@@ -6,6 +6,7 @@ const { avatarUpload } = require("../middleware/upload");
 
 const router = express.Router();
 
+router.get("/", controller.listProfiles);
 router.get("/me", verifyToken, controller.getMyProfile);
 router.put("/me", verifyToken, controller.updateProfile);
 router.post("/me/avatar", verifyToken, avatarUpload, controller.uploadAvatar);

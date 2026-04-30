@@ -9,5 +9,7 @@ router.use(verifyToken);
 router.get("/", controller.listNotifications);
 router.patch("/:id/read", controller.markRead);
 router.patch("/read-all", controller.markAllRead);
+router.delete("/clear", controller.clearAll);
+router.delete("/:id", controller.deleteOne);
 
 module.exports = router;

@@ -20,11 +20,12 @@ router.get("/my/all", verifyToken, controller.myRecipes);
 router.post("/", verifyToken, controller.createRecipe);
 router.put("/:recipeId", verifyToken, controller.updateRecipe);
 router.delete("/:recipeId", verifyToken, controller.deleteRecipe);
+router.patch("/:recipeId/archive", verifyToken, controller.archiveRecipe);
 
 // Image uploads — owner only (checked inside controller)
-router.post("/:recipeId/images/hero", verifyToken, recipeImageUpload, controller.uploadHeroImage);
+router.post("/:recipeId/images/gallery", verifyToken, recipeImageUpload, controller.uploadGalleryImages);
+router.patch("/:recipeId/cover", verifyToken, controller.setCoverImage);
 router.post("/:recipeId/images/steps", verifyToken, recipeImageUpload, controller.uploadStepImages);
-router.post("/:recipeId/images/result", verifyToken, recipeImageUpload, controller.uploadResultImage);
 router.delete("/:recipeId/images/:slot", verifyToken, controller.deleteImageSlot);
 
 module.exports = router;

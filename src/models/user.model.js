@@ -1,22 +1,23 @@
-const mongoose = require("mongoose");
+﻿const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const { BCRYPT_SALT_ROUNDS } = require("../config/config");
 
 const UserSchema = new mongoose.Schema(
   {
     firstName: { type: String, required: true, trim: true },
-    lastName: { type: String, required: true, trim: true },
-    username: { type: String, trim: true, unique: true, sparse: true },
+    lastName: { type: String, required: false, trim: true, default: "" }, 
+    username: { type: String, trim: true, unique: true, sparse: true }, 
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     passwordHash: { type: String, select: false },
-    role: { type: String, enum: ["user", "admin"], default: "user" },
+    role: { type: String, enum: ["user", "admin"], default: "user" },    
     isActive: { type: Boolean, default: true },
     isEmailVerified: { type: Boolean, default: false },
     isPrivate: { type: Boolean, default: false },
     isProfessional: { type: Boolean, default: false },
+    savesPublic: { type: Boolean, default: true },
     followerCount: { type: Number, default: 0 },
     followingCount: { type: Number, default: 0 },
-    
+
     // Profile fields merged from Profile model
     biography: { type: String, default: "" },
     profileImage: { type: String, default: "" },

@@ -250,12 +250,13 @@ const listDisputes = async (req, res, next) => {
 const resolveDispute = async (req, res, next) => {
   try {
     const { disputeId } = req.params;
-    const { actionTaken, notes } = req.body;
+    const { actionTaken, notes, status } = req.body;
 
     const dispute = await Dispute.findById(disputeId);
     if (!dispute) return errorResponse(res, 404, "Dispute not found", "NOT_FOUND");
 
-    dispute.status = "resolved";
+    const allowedStatuses = ["resolved", "dismissed"];
+    dispute.status = allowedStatuses.includes(status) ? status : "resolved";
     dispute.resolution = {
       actionTaken,
       notes,

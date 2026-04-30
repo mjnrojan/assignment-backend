@@ -4,7 +4,7 @@ const Like = require("../models/like.model");
 const Comment = require("../models/comment.model");
 const Save = require("../models/save.model");
 const Recipe = require("../models/recipe.model");
-const { createNotification } = require("../services/notification.service");
+const { createNotification, deleteNotification } = require("../services/notification.service");
 const { successResponse, errorResponse } = require("../utils/apiResponse");
 
 // ─── FOLLOW ────────────────────────────────────────────
@@ -72,6 +72,11 @@ const unfollowUser = async (req, res, next) => {
       await User.findByIdAndUpdate(followerId, { $inc: { followingCount: -1 } });
       await User.findByIdAndUpdate(targetId, { $inc: { followerCount: -1 } });
     }
+
+    // Delete both FOLLOW and FOLLOW_REQUEST notifications regardless of status.
+    // (A request that got accepted stays as FOLLOW_REQUEST type in the DB,
+    //  so checking follow.status would delete the wrong type.)
+    await deleteNotification({ actorId: followerId, recipientId: targetId, types: ["FOLLOW", "FOLLOW_REQUEST"] });
 
     return successResponse(res, 200, null, null, "Unfollowed successfully");
   } catch (error) {
@@ -172,24 +177,31 @@ const likeRecipe = async (req, res, next) => {
     const { recipeId } = req.params;
     const userId = req.user.userId;
 
-    const existing = await Like.findOne({ userId, recipeId });
-    if (existing) {
-      return errorResponse(res, 400, "Already liked", "ALREADY_LIKED");
+    const recipe = await Recipe.findById(recipeId);
+    if (!recipe) return errorResponse(res, 404, "Recipe not found", "NOT_FOUND");
+
+    try {
+      await Like.create({ userId, recipeId });
+    } catch (createErr) {
+      if (createErr.code === 11000) {
+        return successResponse(res, 200, null, null, "Already liked");
+      }
+      throw createErr;
     }
 
-    await Like.create({ userId, recipeId });
-    const recipe = await Recipe.findByIdAndUpdate(recipeId, { $inc: { likeCount: 1 } });
+    await Recipe.findByIdAndUpdate(recipeId, { $inc: { likeCount: 1 } });
 
-    // Notify Author
     const actor = await User.findById(userId);
-    await createNotification({
-      recipientId: recipe.authorId,
-      actorId: userId,
-      type: "LIKE",
-      entityId: recipeId,
-      entityModel: "Recipe",
-      message: `${actor.firstName} liked your recipe: ${recipe.title}`
-    });
+    if (actor) {
+      await createNotification({
+        recipientId: recipe.authorId,
+        actorId: userId,
+        type: "LIKE",
+        entityId: recipeId,
+        entityModel: "Recipe",
+        message: `${actor.firstName} liked your recipe: ${recipe.title}`,
+      });
+    }
 
     return successResponse(res, 201, null, null, "Recipe liked");
   } catch (error) {
@@ -204,10 +216,13 @@ const unlikeRecipe = async (req, res, next) => {
 
     const deleted = await Like.findOneAndDelete({ userId, recipeId });
     if (!deleted) {
-      return errorResponse(res, 404, "Like not found", "NOT_FOUND");
+      return successResponse(res, 200, null, null, "Like already removed");
     }
 
-    await Recipe.findByIdAndUpdate(recipeId, { $inc: { likeCount: -1 } });
+    const recipe = await Recipe.findByIdAndUpdate(recipeId, { $inc: { likeCount: -1 } });
+    if (recipe) {
+      await deleteNotification({ actorId: userId, recipientId: recipe.authorId, type: "LIKE", entityId: recipeId });
+    }
     return successResponse(res, 200, null, null, "Like removed");
   } catch (error) {
     next(error);
@@ -219,14 +234,19 @@ const likeComment = async (req, res, next) => {
     const { commentId } = req.params;
     const userId = req.user.userId;
 
-    const existing = await Like.findOne({ userId, commentId });
-    if (existing) {
-      return errorResponse(res, 400, "Comment already liked", "ALREADY_LIKED");
+    const comment = await Comment.findById(commentId);
+    if (!comment) return errorResponse(res, 404, "Comment not found", "NOT_FOUND");
+
+    try {
+      await Like.create({ userId, commentId });
+    } catch (createErr) {
+      if (createErr.code === 11000) {
+        return successResponse(res, 200, null, null, "Comment already liked");
+      }
+      throw createErr;
     }
 
-    await Like.create({ userId, commentId });
-    const comment = await Comment.findByIdAndUpdate(commentId, { $inc: { likeCount: 1 } });
-    if (!comment) return errorResponse(res, 404, "Comment not found", "NOT_FOUND");
+    await Comment.findByIdAndUpdate(commentId, { $inc: { likeCount: 1 } });
 
     return successResponse(res, 201, null, null, "Comment liked");
   } catch (error) {
@@ -241,7 +261,7 @@ const unlikeComment = async (req, res, next) => {
 
     const deleted = await Like.findOneAndDelete({ userId, commentId });
     if (!deleted) {
-      return errorResponse(res, 404, "Like not found", "NOT_FOUND");
+      return successResponse(res, 200, null, null, "Comment like already removed");
     }
 
     await Comment.findByIdAndUpdate(commentId, { $inc: { likeCount: -1 } });
@@ -413,10 +433,10 @@ const Dispute = require("../models/dispute.model");
 const fileDispute = async (req, res, next) => {
   try {
     const { recipeId } = req.params;
-    const { reason, details } = req.body;
+    const { reason, details = "" } = req.body;
 
-    if (!reason || !details) {
-      return errorResponse(res, 400, "Reason and details are required", "VALIDATION_ERROR");
+    if (!reason) {
+      return errorResponse(res, 400, "Reason is required", "VALIDATION_ERROR");
     }
 
     // Prevention: User cannot file same dispute twice for same recipe
@@ -450,7 +470,11 @@ const fileDispute = async (req, res, next) => {
 const fileCommentDispute = async (req, res, next) => {
   try {
     const { commentId } = req.params;
-    const { reason, details } = req.body;
+    const { reason, details = "" } = req.body;
+
+    if (!reason) {
+      return errorResponse(res, 400, "Reason is required", "VALIDATION_ERROR");
+    }
 
     const comment = await Comment.findById(commentId);
     if (!comment) return errorResponse(res, 404, "Comment not found", "NOT_FOUND");
