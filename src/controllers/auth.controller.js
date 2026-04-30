@@ -126,6 +126,10 @@ const login = async (req, res, next) => {
       return errorResponse(res, 401, "Invalid credentials", "INVALID_CREDENTIALS");
     }
 
+    if (!user.isEmailVerified) {
+      return errorResponse(res, 403, "Please verify your email before logging in. Check your inbox for the verification link.", "EMAIL_NOT_VERIFIED");
+    }
+
     const accessToken = generateAccessToken({ userId: user._id, role: user.role });
     const refreshToken = generateRefreshToken({ userId: user._id });
 
@@ -228,13 +232,18 @@ const verifyEmail = async (req, res, next) => {
       return errorResponse(res, 400, "Invalid or expired verification link", "INVALID_TOKEN");
     }
 
-    const user = await User.findOne({
-      _id: decoded.userId,
-      verificationToken: hashToken(token),
-    });
-
+    const user = await User.findById(decoded.userId).select("+verificationToken");
     if (!user) {
       return errorResponse(res, 400, "Invalid verification link", "INVALID_TOKEN");
+    }
+
+    // Idempotent: already verified is a success
+    if (user.isEmailVerified) {
+      return successResponse(res, 200, null, null, "Email already verified. You can now log in.");
+    }
+
+    if (user.verificationToken !== hashToken(token)) {
+      return errorResponse(res, 400, "Invalid or expired verification link", "INVALID_TOKEN");
     }
 
     user.isEmailVerified = true;
@@ -243,7 +252,7 @@ const verifyEmail = async (req, res, next) => {
 
     await sendWelcomeEmail(user);
 
-    return successResponse(res, 200, null, null, "Email verified successfully! You can now log in to your dashboard.");
+    return successResponse(res, 200, null, null, "Email verified successfully! You can now log in.");
   } catch (error) {
     next(error);
   }
